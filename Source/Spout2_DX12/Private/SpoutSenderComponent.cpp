@@ -1933,11 +1933,11 @@ void USpoutSenderComponent::StartBroadcastConfigured(
         SetComponentTickInterval(0.0f);
         SetComponentTickEnabled(false);
 
-        const bool bRegistered = ShouldUsePreSlateGameViewportPath() ?
+        const bool bCallbackIsRegistered = ShouldUsePreSlateGameViewportPath() ?
             RegisterGameViewportDrawnCallback() :
             RegisterGameViewportBackBufferCallback();
 
-        if (!bRegistered) {
+        if (!bCallbackIsRegistered) {
             StopBroadcastInternal(false, false);
             return;
         }

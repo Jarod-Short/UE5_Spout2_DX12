@@ -477,6 +477,11 @@ bool USpoutReceiverComponent::SignalSubmittedWork(int32 TrackedSlotIndex)
 		return false;
 	}
 
+	// Required to submit the D3D11On12 copy, resource transition,
+	// and fence signal to the shared D3D12 command queue.
+	CachedCtx11_4->Flush();
+	++StatFlushCount;
+
 	if (TrackedSlotIndex == 0 || TrackedSlotIndex == 1)
 	{
 		SlotFenceState[TrackedSlotIndex].FenceValue = FenceValue;
@@ -1090,7 +1095,6 @@ bool USpoutReceiverComponent::ReceiveOnce()
 		return false;
 	}
 
-	// No per-frame Flush / Flush1 here.
 	// Double-buffer publish is handled later by PublishCompletedInternalBuffer()
 	// only after the fence completes.
 
