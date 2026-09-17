@@ -67,7 +67,7 @@ public:
     ESpoutSenderSourceType SourceType = ESpoutSenderSourceType::RenderTarget;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Spout", meta = (EditCondition = "SourceType == ESpoutSenderSourceType::RenderTarget", EditConditionHides, ToolTip = "The render target to send when Source Type is set to Render Target."))
     UTextureRenderTarget2D *CurrentRenderTarget = nullptr;
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Spout", meta = (DisplayName = "Hide Slate UI in Package", EditCondition = "SourceType == ESpoutSenderSourceType::GameViewport", EditConditionHides, ToolTip = "If enabled, Slate UI be hidden from the final result in package builds."))
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Spout", meta = (DisplayName = "Hide Slate UI in Package", EditCondition = "SourceType == ESpoutSenderSourceType::GameViewport", EditConditionHides, ToolTip = "If enabled, screen-space Slate and UMG are excluded from packaged Game Viewport output."))
     bool bExcludeSlateUIFromPackage = false;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Spout", meta = (ToolTip = "How often the sender pushes frames. Set to 0 to disable throttling and tick every frame."))
     int32 BroadcastFPS = 60;
