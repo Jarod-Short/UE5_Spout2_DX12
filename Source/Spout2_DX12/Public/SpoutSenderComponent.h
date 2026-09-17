@@ -124,6 +124,7 @@ private:
     void OnGameViewportDrawn();
     bool RegisterGameViewportBackBufferCallback();
     void UnregisterGameViewportBackBufferCallback();
+    void QueuePreSlateGameViewportFrame_RenderThread(FViewport *Viewport);
     void OnGameViewportBackBufferReady_RenderThread(SWindow& SlateWindow, const FTextureRHIRef& FrameBuffer);
 
     void EnsureBridge();

@@ -801,6 +801,16 @@ void USpoutSenderComponent::OnGameViewportDrawn() {
         return;
     }
 
+    UGameViewportClient *GameViewportClient = RegisteredGameViewportClient.Get();
+    FViewport *Viewport = GameViewportClient ? GameViewportClient->Viewport : nullptr;
+
+    if (!Viewport) {
+        LogGameViewportFailure(
+            TEXT("OnGameViewportDrawn"),
+            TEXT("Registered game viewport is unavailable."));
+        return;
+    }
+
     const double CurrentTimeSeconds = FPlatformTime::Seconds();
 
     if (GameViewportMinSendIntervalSeconds > 0.0 &&
@@ -810,7 +820,7 @@ void USpoutSenderComponent::OnGameViewportDrawn() {
     }
 
     GameViewportLastSendTimeSeconds = CurrentTimeSeconds;
-    UpdateTexture();
+    QueuePreSlateGameViewportFrame_RenderThread(Viewport);
 #endif
 }
 
@@ -929,6 +939,102 @@ void USpoutSenderComponent::ShutdownBridge()
         delete SpoutBridge;
         SpoutBridge = nullptr;
     }
+#endif
+}
+
+void USpoutSenderComponent::QueuePreSlateGameViewportFrame_RenderThread(FViewport *Viewport) {
+#if PLATFORM_WINDOWS
+    if (!Viewport) {
+        return;
+    }
+
+    const FString SenderContext = BuildSenderDebugContext(this);
+
+    ENQUEUE_RENDER_COMMAND(SpoutSendPreSlateGameViewport)(
+        [this, Viewport, SenderContext](FRHICommandListImmediate &RHICmdList) {
+        if (!bIsBroadcasting || !bGameViewportDrawnCallbackRegistered ||
+            !ShouldUsePreSlateGameViewportPath()) {
+            return;
+        }
+
+        const FTextureRHIRef ViewportTexture = Viewport->GetRenderTargetTexture();
+
+        if (!ViewportTexture.IsValid()) {
+            LogGameViewportFailure(
+                TEXT("QueuePreSlateGameViewportFrame_RenderThread"),
+                TEXT("Render-thread viewport texture is invalid."));
+            return;
+        }
+
+        const int32 Width = ViewportTexture->GetSizeX();
+        const int32 Height = ViewportTexture->GetSizeY();
+        const EPixelFormat Format = ViewportTexture->GetFormat();
+
+        if (Width <= 0 || Height <= 0 || Format == PF_Unknown) {
+            LogGameViewportFailure(
+                TEXT("QueuePreSlateGameViewportFrame_RenderThread"),
+                FString::Printf(
+                    TEXT("Invalid render-thread viewport texture: %dx%d, format=%d."),
+                    Width,
+                    Height,
+                    static_cast<int32>(Format)));
+            return;
+        }
+
+        const int32 SlotCount = bUseDoubleBuffer ? 2 : 1;
+        int32 SlotIndex = SlotCount == 2 ? NextStageSlot : 0;
+
+        if (!IsStageSlotReady_RenderThread(SlotIndex)) {
+            if (SlotCount == 2) {
+                const int32 OtherSlotIndex = 1 - SlotIndex;
+
+                if (IsStageSlotReady_RenderThread(OtherSlotIndex)) {
+                    SlotIndex = OtherSlotIndex;
+                } else {
+                    LogGameViewportFailure(
+                        TEXT("QueuePreSlateGameViewportFrame_RenderThread"),
+                        TEXT("Both stage slots are still pending; frame skipped."));
+                    return;
+                }
+            } else {
+                LogGameViewportFailure(
+                    TEXT("QueuePreSlateGameViewportFrame_RenderThread"),
+                    TEXT("Stage slot is still pending; frame skipped."));
+                return;
+            }
+        }
+
+        const bool bSent = SendFrame_RenderThread(
+            RHICmdList,
+            ViewportTexture,
+            Width,
+            Height,
+            Format,
+            SlotIndex,
+            ERHIAccess::RTV,
+            ERHIAccess::RTV,
+            true,
+            true,
+            SenderContext);
+
+        if (!bSent) {
+            return;
+        }
+
+        NextStageSlot = (SlotIndex + 1) % SlotCount;
+        ++GameViewportQueuedFrameCount;
+
+        if (GameViewportQueuedFrameCount == 1) {
+            UE_LOG(
+                LogSpoutSender,
+                Display,
+                TEXT("Pre-Slate game viewport capture sent its first frame: %dx%d, format=%d. %s"),
+                Width,
+                Height,
+                static_cast<int32>(Format),
+                *SenderContext);
+        }
+    });
 #endif
 }
 
