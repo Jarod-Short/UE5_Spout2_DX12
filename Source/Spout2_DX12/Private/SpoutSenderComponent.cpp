@@ -478,7 +478,6 @@ void USpoutSenderComponent::LogGameViewportReady(
 
 void USpoutSenderComponent::EnsureBridge()
 {
-    void USpoutSenderComponent::EnsureBridge() {
 #if PLATFORM_WINDOWS
     const FString SenderContext = BuildSenderDebugContext(this);
 
