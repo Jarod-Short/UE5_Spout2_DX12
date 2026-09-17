@@ -65,7 +65,9 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Spout", meta = (ToolTip = "Selects which Unreal source this component sends to Spout: a render target, the game viewport, or the editor viewport."))
     ESpoutSenderSourceType SourceType = ESpoutSenderSourceType::RenderTarget;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Spout", meta = (EditCondition = "SourceType == ESpoutSenderSourceType::RenderTarget", EditConditionHides, ToolTip = "The render target to send when Source Type is set to Render Target."))
-    UTextureRenderTarget2D* CurrentRenderTarget = nullptr;
+    UTextureRenderTarget2D *CurrentRenderTarget = nullptr;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Spout", meta = (DisplayName = "Hide Slate UI in Package", EditCondition = "SourceType == ESpoutSenderSourceType::GameViewport", EditConditionHides, ToolTip = "If enabled, Slate UI be hidden from the final result in package builds."))
+    bool bExcludeSlateUIFromPackage = false;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Spout", meta = (ToolTip = "How often the sender pushes frames. Set to 0 to disable throttling and tick every frame."))
     int32 BroadcastFPS = 60;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Spout", meta = (ToolTip = "Uses two staging buffers instead of one. This can improve frame pacing at the cost of more GPU memory and latency."))
@@ -108,12 +110,17 @@ private:
     bool IsD3D12Active() const;
     bool IsUsingEditorViewportSource() const;
     bool IsUsingGameViewportSource() const;
+    bool ShouldUsePackagedGameViewportCallback() const;
     bool ShouldUseSlateBackBufferGameViewportPath() const;
+    bool ShouldUsePreSlateGameViewportPath() const;
     bool HasValidConfiguredSource() const;
     bool ResolveCurrentSource(FTextureRHIRef& OutTexture, int32& OutWidth, int32& OutHeight, EPixelFormat& OutFormat) const;
     void ResetGameViewportDebugState();
     void LogGameViewportFailure(const TCHAR* Context, const FString& Reason) const;
     void LogGameViewportReady(const FViewport* Viewport, const FTextureRHIRef& ViewportTexture, int32 Width, int32 Height, EPixelFormat Format) const;
+    bool RegisterGameViewportDrawnCallback();
+    void UnregisterGameViewportDrawnCallback();
+    void OnGameViewportDrawn();
     bool RegisterGameViewportBackBufferCallback();
     void UnregisterGameViewportBackBufferCallback();
     void OnGameViewportBackBufferReady_RenderThread(SWindow& SlateWindow, const FTextureRHIRef& FrameBuffer);
@@ -180,11 +187,14 @@ private:
         const FString& SenderContext);
     void QueueSendFrame_RenderThread(FTextureRHIRef SrcRHI, int32 W, int32 H, EPixelFormat PF, int32 SlotIndex);
 
+    FDelegateHandle GameViewportDrawnDelegateHandle;
+    TWeakObjectPtr<UGameViewportClient> RegisteredGameViewportClient;
     FDelegateHandle GameViewportBackBufferReadyDelegateHandle;
     const SWindow* GameViewportWindow = nullptr;
     FString GameViewportRenderThreadContext;
     double GameViewportMinSendIntervalSeconds = 0.0;
     double GameViewportLastSendTimeSeconds = 0.0;
+    bool bGameViewportDrawnCallbackRegistered = false;
     bool bGameViewportBackBufferCallbackRegistered = false;
     bool bHasLoggedGameViewportBackBufferCallback = false;
     bool bHasLoggedGameViewportWrongWindowSkip = false;

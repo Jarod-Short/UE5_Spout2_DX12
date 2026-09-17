@@ -212,6 +212,14 @@ bool USpoutSenderComponent::ShouldUseSlateBackBufferGameViewportPath() const
 #endif
 }
 
+bool USpoutSenderComponent::ShouldUseSlateBackBufferGameViewportPath() const {
+    return ShouldUsePackagedGameViewportCallback() && !bExcludeSlateUIFromPackage;
+}
+
+bool USpoutSenderComponent::ShouldUsePreSlateGameViewportPath() const {
+    return ShouldUsePackagedGameViewportCallback() && bExcludeSlateUIFromPackage;
+}
+
 bool USpoutSenderComponent::HasValidConfiguredSource() const
 {
     switch (SourceType)
@@ -731,6 +739,41 @@ ID3D11On12Device* USpoutSenderComponent::GetD3D11On12(spoutDX12* InDX12)
     return InDX12 ? InDX12->GetD3D11On12device() : nullptr;
 #else
     return nullptr;
+#endif
+}
+
+bool USpoutSenderComponent::RegisterGameViewportDrawnCallback() {
+#if PLATFORM_WINDOWS
+    UGameViewportClient *GameViewportClient = GEngine ? GEngine->GameViewport : nullptr;
+    if (!GameViewportClient) {
+        return false;
+    }
+
+    UnregisterGameViewportDrawnCallback();
+
+    RegisteredGameViewportClient = GameViewportClient;
+    GameViewportDrawnCallbackDelegateHandle = GEngine->GameViewport->OnDrawn().AddUObject(this, &USpoutSenderComponent::OnGameViewportDrawn);
+    bGameViewportDrawnCallbackRegistered = true;
+
+    return true;
+#else
+    return false;
+#endif
+}
+
+void USpoutSenderComponent::UnregisterGameViewportDrawnCallback() {
+#if PLATFORM_WINDOWS
+    if (!bGameViewportDrawnCallbackRegistered) {
+        return;
+    }
+
+    if (UGameViewportClient *GameViewportClient = RegisteredGameViewportClient.Get()) {
+        GameViewportClient->OnDrawn().Remove(GameViewportDrawnCallbackDelegateHandle);
+    }
+
+    RegisteredGameViewportClient.Reset();
+    GameViewportDrawnCallbackDelegateHandle.Reset();
+    bGameViewportDrawnCallbackRegistered = false;
 #endif
 }
 
