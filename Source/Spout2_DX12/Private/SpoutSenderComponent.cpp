@@ -952,17 +952,20 @@ void USpoutSenderComponent::QueuePreSlateGameViewportFrame_RenderThread(FViewpor
 
     ENQUEUE_RENDER_COMMAND(SpoutSendPreSlateGameViewport)(
         [this, Viewport, SenderContext](FRHICommandListImmediate &RHICmdList) {
-        if (!bIsBroadcasting || !bGameViewportDrawnCallbackRegistered ||
-            !ShouldUsePreSlateGameViewportPath()) {
+        check(IsInRenderingThread());
+
+        if (!bIsBroadcasting || !bGameViewportDrawnCallbackRegistered) {
             return;
         }
 
         const FTextureRHIRef ViewportTexture = Viewport->GetRenderTargetTexture();
 
         if (!ViewportTexture.IsValid()) {
-            LogGameViewportFailure(
-                TEXT("QueuePreSlateGameViewportFrame_RenderThread"),
-                TEXT("Render-thread viewport texture is invalid."));
+            UE_LOG(
+                LogSpoutSender,
+                Warning,
+                TEXT("QueuePreSlateGameViewportFrame_RenderThread: Render-thread viewport texture is invalid. %s"),
+                *SenderContext);
             return;
         }
 
@@ -971,13 +974,14 @@ void USpoutSenderComponent::QueuePreSlateGameViewportFrame_RenderThread(FViewpor
         const EPixelFormat Format = ViewportTexture->GetFormat();
 
         if (Width <= 0 || Height <= 0 || Format == PF_Unknown) {
-            LogGameViewportFailure(
-                TEXT("QueuePreSlateGameViewportFrame_RenderThread"),
-                FString::Printf(
-                    TEXT("Invalid render-thread viewport texture: %dx%d, format=%d."),
-                    Width,
-                    Height,
-                    static_cast<int32>(Format)));
+            UE_LOG(
+                LogSpoutSender,
+                Warning,
+                TEXT("QueuePreSlateGameViewportFrame_RenderThread: Invalid viewport texture: %dx%d Format=%d. %s"),
+                Width,
+                Height,
+                static_cast<int32>(Format),
+                *SenderContext);
             return;
         }
 
