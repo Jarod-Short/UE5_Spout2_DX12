@@ -129,9 +129,9 @@ private:
 
     void EnsureBridge();
     void ShutdownBridge();
-    bool CacheDX11FenceObjects();
+    bool CacheDX11FenceObjects(const FString &SenderContext);
     void ReleaseFenceObjects();
-    bool SignalSubmittedWork(int32 SlotIndex);
+    bool SignalSubmittedWork(int32 SlotIndex, const FString &SenderContext);
     bool IsStageSlotReady_GameThread(int32 SlotIndex) const;
     bool IsStageSlotReady_RenderThread(int32 SlotIndex) const;
     static ID3D12Device* GetUE_D3D12Device();
