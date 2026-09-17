@@ -197,15 +197,14 @@ bool USpoutSenderComponent::IsUsingGameViewportSource() const
     return SourceType == ESpoutSenderSourceType::GameViewport;
 }
 
-bool USpoutSenderComponent::ShouldUseSlateBackBufferGameViewportPath() const
-{
+bool USpoutSenderComponent::ShouldUsePackagedGameViewportCallback() const {
 #if PLATFORM_WINDOWS
 #if WITH_EDITOR
-    if (GIsEditor)
-    {
+    if (GIsEditor) {
         return false;
     }
 #endif
+
     return IsUsingGameViewportSource() && !IsEditorWorld() && !IsPreviewWorld();
 #else
     return false;
@@ -373,11 +372,14 @@ void USpoutSenderComponent::ResetGameViewportDebugState()
     LastLoggedGameViewportHeight = 0;
     LastLoggedGameViewportFormat = PF_Unknown;
     GameViewportQueuedFrameCount = 0;
+    RegisteredGameViewportClient.Reset();
+    GameViewportDrawnDelegateHandle.Reset();
     GameViewportBackBufferReadyDelegateHandle.Reset();
     GameViewportWindow = nullptr;
     GameViewportRenderThreadContext.Reset();
     GameViewportMinSendIntervalSeconds = 0.0;
     GameViewportLastSendTimeSeconds = 0.0;
+    bGameViewportDrawnCallbackRegistered = false;
     bGameViewportBackBufferCallbackRegistered = false;
     bHasLoggedGameViewportBackBufferCallback = false;
     bHasLoggedGameViewportWrongWindowSkip = false;
@@ -744,18 +746,33 @@ ID3D11On12Device* USpoutSenderComponent::GetD3D11On12(spoutDX12* InDX12)
 
 bool USpoutSenderComponent::RegisterGameViewportDrawnCallback() {
 #if PLATFORM_WINDOWS
+    if (!ShouldUsePreSlateGameViewportPath()) {
+        return false;
+    }
+
     UGameViewportClient *GameViewportClient = GEngine ? GEngine->GameViewport : nullptr;
     if (!GameViewportClient) {
+        LogGameViewportFailure(
+            TEXT("RegisterGameViewportDrawnCallback"),
+            TEXT("GEngine->GameViewport is null.")
+        );
         return false;
     }
 
     UnregisterGameViewportDrawnCallback();
 
     RegisteredGameViewportClient = GameViewportClient;
-    GameViewportDrawnCallbackDelegateHandle = GEngine->GameViewport->OnDrawn().AddUObject(this, &USpoutSenderComponent::OnGameViewportDrawn);
-    bGameViewportDrawnCallbackRegistered = true;
+    GameViewportRenderThreadContext = BuildSenderDebugContext(this);
+    GameViewportDrawnDelegateHandle =
+        GameViewportClient->OnDrawn().AddUObject(this, &USpoutSenderComponent::OnGameViewportDrawn);
 
-    return true;
+    bGameViewportDrawnCallbackRegistered = GameViewportDrawnDelegateHandle.IsValid();
+
+    if (!bGameViewportDrawnCallbackRegistered) {
+        RegisteredGameViewportClient.Reset();
+    }
+
+    return bGameViewportDrawnCallbackRegistered;
 #else
     return false;
 #endif
@@ -768,12 +785,32 @@ void USpoutSenderComponent::UnregisterGameViewportDrawnCallback() {
     }
 
     if (UGameViewportClient *GameViewportClient = RegisteredGameViewportClient.Get()) {
-        GameViewportClient->OnDrawn().Remove(GameViewportDrawnCallbackDelegateHandle);
+        GameViewportClient->OnDrawn().Remove(GameViewportDrawnDelegateHandle);
     }
 
     RegisteredGameViewportClient.Reset();
-    GameViewportDrawnCallbackDelegateHandle.Reset();
+    GameViewportDrawnDelegateHandle.Reset();
     bGameViewportDrawnCallbackRegistered = false;
+#endif
+}
+
+void USpoutSenderComponent::OnGameViewportDrawn() {
+#if PLATFORM_WINDOWS
+    if (!bIsBroadcasting || !bGameViewportDrawnCallbackRegistered ||
+        !ShouldUsePreSlateGameViewportPath()) {
+        return;
+    }
+
+    const double CurrentTimeSeconds = FPlatformTime::Seconds();
+
+    if (GameViewportMinSendIntervalSeconds > 0.0 &&
+        GameViewportLastSendTimeSeconds > 0.0 &&
+        CurrentTimeSeconds - GameViewportLastSendTimeSeconds < GameViewportMinSendIntervalSeconds) {
+        return;
+    }
+
+    GameViewportLastSendTimeSeconds = CurrentTimeSeconds;
+    UpdateTexture();
 #endif
 }
 
@@ -1064,6 +1101,7 @@ void USpoutSenderComponent::StopBroadcastInternal(bool bClearConfiguration, bool
     ReleaseEditorOwnership();
 
 #if PLATFORM_WINDOWS
+    UnregisterGameViewportDrawnCallback();
     UnregisterGameViewportBackBufferCallback();
     FlushRenderingCommands();
     ResetStageSlots();
@@ -1616,11 +1654,12 @@ bool USpoutSenderComponent::SendFrame_RenderThread(
 void USpoutSenderComponent::QueueSendFrame_RenderThread(FTextureRHIRef SrcRHI, int32 W, int32 H, EPixelFormat PF, int32 SlotIndex)
 {
 #if PLATFORM_WINDOWS
+    const bool bRestoreSourceState = ShouldUsePreSlateGameViewportPath();
     const bool bLogGameViewport = IsUsingGameViewportSource();
     const FString SenderContext = bLogGameViewport ? BuildSenderDebugContext(this) : FString();
 
     ENQUEUE_RENDER_COMMAND(SpoutSendFrame)(
-        [this, SrcRHI, W, H, PF, SlotIndex, bLogGameViewport, SenderContext](FRHICommandListImmediate& RHICmdList)
+        [this, SrcRHI, W, H, PF, SlotIndex, bLogGameViewport, bRestoreSourceState, SenderContext](FRHICommandListImmediate& RHICmdList)
         {
             SendFrame_RenderThread(
                 RHICmdList,
@@ -1631,7 +1670,7 @@ void USpoutSenderComponent::QueueSendFrame_RenderThread(FTextureRHIRef SrcRHI, i
                 SlotIndex,
                 ERHIAccess::RTV,
                 ERHIAccess::RTV,
-                false,
+                bRestoreSourceState,
                 bLogGameViewport,
                 SenderContext);
         });
@@ -1883,19 +1922,22 @@ void USpoutSenderComponent::StartBroadcastConfigured(
 
     ApplyTickPrerequisite();
 
-    const bool bUseSlateBackBufferCallback = ShouldUseSlateBackBufferGameViewportPath();
-    GameViewportMinSendIntervalSeconds =
-        (BroadcastFPS > 0)
-        ? (1.0 / static_cast<double>(FMath::Clamp(BroadcastFPS, 1, 240)))
-        : 0.0;
+    const bool bUsePackagedGameViewportCallback = ShouldUsePackagedGameViewportCallback();
 
-    if (bUseSlateBackBufferCallback)
-    {
+    GameViewportMinSendIntervalSeconds =
+        BroadcastFPS > 0 ?
+        1.0 / static_cast<double>(FMath::Clamp(BroadcastFPS, 1, 240)) :
+        0.0;
+
+    if (bUsePackagedGameViewportCallback) {
         SetComponentTickInterval(0.0f);
         SetComponentTickEnabled(false);
 
-        if (!RegisterGameViewportBackBufferCallback())
-        {
+        const bool bRegistered = ShouldUsePreSlateGameViewportPath() ?
+            RegisterGameViewportDrawnCallback() :
+            RegisterGameViewportBackBufferCallback();
+
+        if (!bRegistered) {
             StopBroadcastInternal(false, false);
             return;
         }
@@ -1903,9 +1945,10 @@ void USpoutSenderComponent::StartBroadcastConfigured(
         UE_LOG(
             LogSpoutSender,
             Display,
-            TEXT("StartBroadcastConfigured: Using Slate backbuffer callback for packaged game viewport capture. Min interval %.4f seconds. %s"),
-            GameViewportMinSendIntervalSeconds,
-            *GameViewportRenderThreadContext);
+            TEXT("StartBroadcastConfigured: Using %s callback for packaged game viewport capture."),
+            ShouldUsePreSlateGameViewportPath() ? TEXT("pre-Slate") : TEXT("Slate backbuffer")
+        );
+
         return;
     }
 

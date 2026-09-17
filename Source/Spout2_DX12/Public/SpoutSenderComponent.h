@@ -21,6 +21,7 @@ class spoutDX12;
 class AActor;
 class FViewport;
 class SWindow;
+class UGameViewportClient;
 
 #if WITH_EDITOR
 struct FPropertyChangedEvent;
